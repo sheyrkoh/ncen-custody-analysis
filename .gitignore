@@ -1,0 +1,11 @@
+﻿# Data: downloaded by scripts/01_download.py, too large for GitHub
+data/
+*.db
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
