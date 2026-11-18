@@ -175,3 +175,56 @@ FROM CUSTODIAN
 WHERE FUND_ID IN ('0001752724-25-022790_0000737520_S000015656',
                   '0001752724-25-024251_0000737520_S000015656')
   AND IS_AFFILIATED = 'Y';
+  
+-- Custody type by sub-custodian flag.
+-- Result: 8 of the 9 types in the readme appear (no insurance company
+-- sponsor, rule 26a-2). 8,102 rows are marked as not sub-custodians, for
+-- 6,881 funds, so IS_SUB_CUSTODIAN = 'N' alone does not identify the main
+-- custodian. Of those rows, Bank (6,800) and Self (326) look like real main
+-- custodians. Futures commission merchants (669) and securities
+-- depositories (109 US, 93 foreign) are not competing for custody mandates.
+-- Unclear: foreign custodian (85), Other (17), exchange (3).
+-- 566 bank rows are marked as sub-custodians and should stay out.
+SELECT CUSTODY_TYPE, IS_SUB_CUSTODIAN, COUNT(*) FROM CUSTODIAN
+GROUP BY CUSTODY_TYPE, IS_SUB_CUSTODIAN
+ORDER BY COUNT(*) DESC;
+
+
+-- Candidate rule for main custodian: IS_SUB_CUSTODIAN = 'N' and custody
+-- type Bank or Self. How many candidates does each fund have?
+-- Result: 0 = 96 funds, 1 = 6,499 (94%), 2 = 265, 3 = 13, 5 to 8 = 8.
+-- Check: funds add up to 6,881 and candidate rows to 7,126.
+-- Phase 4 needs a rule for funds with no candidate and for funds with
+-- more than one.
+WITH main_cust AS (SELECT * FROM CUSTODIAN 
+WHERE IS_SUB_CUSTODIAN = 'N' AND (CUSTODY_TYPE LIKE 'Bank%' OR CUSTODY_TYPE LIKE 'Self%')),
+per_fund AS (SELECT f.FUND_ID, COUNT(m.FUND_ID) AS n_main FROM FUND_REPORTED_INFO f
+LEFT JOIN main_cust m ON f.FUND_ID = m.FUND_ID
+GROUP BY f.FUND_ID)
+SELECT n_main, COUNT(*) AS n_funds
+FROM per_fund
+GROUP BY n_main
+ORDER BY n_main;
+
+
+-- What do the 96 funds with no candidate main custodian list instead?
+-- Result: 62 funds list only a US securities depository (one row each),
+-- 15 list no custodians at all, 12 list a bank flagged as sub-custodian
+-- (possibly a filing error), a few list a foreign custodian (3) or an
+-- exchange (2) as non-sub.
+WITH main_cust AS (SELECT * FROM CUSTODIAN 
+WHERE IS_SUB_CUSTODIAN = 'N' AND (CUSTODY_TYPE LIKE 'Bank%' OR CUSTODY_TYPE LIKE 'Self%')),
+per_fund AS (SELECT f.FUND_ID, COUNT(m.FUND_ID) AS n_main FROM FUND_REPORTED_INFO f
+LEFT JOIN main_cust m ON f.FUND_ID = m.FUND_ID
+GROUP BY f.FUND_ID)
+SELECT c.CUSTODY_TYPE, c.IS_SUB_CUSTODIAN,
+       COUNT(*) AS n_rows,
+       COUNT(DISTINCT p.FUND_ID) AS n_funds
+FROM per_fund p
+LEFT JOIN CUSTODIAN c ON p.FUND_ID = c.FUND_ID
+WHERE p.n_main = 0
+GROUP BY c.CUSTODY_TYPE, c.IS_SUB_CUSTODIAN
+ORDER BY n_funds DESC;
+
+
+
