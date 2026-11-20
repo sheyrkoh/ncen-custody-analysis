@@ -226,5 +226,47 @@ WHERE p.n_main = 0
 GROUP BY c.CUSTODY_TYPE, c.IS_SUB_CUSTODIAN
 ORDER BY n_funds DESC;
 
+-- The 96 funds with no candidate main custodian, by fund family.
+-- Result: about $11bn in total, largest the Merger Fund ($2.6bn);
+-- ProFunds has 52 of the funds but only about $1.2bn. 15 funds, mostly
+-- closed-end funds (First Trust, MFS, DWS, BlackRock), have
+-- MONTHLY_AVG_NET_ASSETS missing.
+WITH main_cust AS (SELECT * FROM CUSTODIAN 
+WHERE IS_SUB_CUSTODIAN = 'N' AND (CUSTODY_TYPE LIKE 'Bank%' OR CUSTODY_TYPE LIKE 'Self%')),
+per_fund AS (SELECT f.FUND_ID, COUNT(m.FUND_ID) AS n_main FROM FUND_REPORTED_INFO f
+LEFT JOIN main_cust m ON f.FUND_ID = m.FUND_ID
+GROUP BY f.FUND_ID)
+SELECT r.REGISTRANT_NAME, COUNT(*) AS n_funds, SUM(CAST(f.MONTHLY_AVG_NET_ASSETS AS REAL)) AS total_assets
+FROM per_fund p
+LEFT JOIN FUND_REPORTED_INFO f ON p.FUND_ID = f.FUND_ID
+LEFT JOIN REGISTRANT r ON f.ACCESSION_NUMBER = r.ACCESSION_NUMBER
+WHERE p.n_main = 0
+GROUP BY r.REGISTRANT_NAME
+ORDER BY total_assets DESC;
 
+-- Net assets by registration form (all 6,881 funds).
+-- Result: N-1A 6,505 funds, 129 missing monthly, $17.6tn monthly and
+-- $3.0tn daily; N-2 361 funds, 15 missing, $198bn, daily all 0;
+-- N-3 15 funds, 2 missing, $258bn monthly, $9.6bn daily.
+-- The 96 funds with no main custodian (about $11bn) are around 0.05%
+-- of assets.
+SELECT r.INVESTMENT_COMPANY_TYPE, 
+       COUNT(*) AS n_funds,
+	   (COUNT(*) - COUNT(f.MONTHLY_AVG_NET_ASSETS)) AS missing,
+	   SUM(CAST(f.MONTHLY_AVG_NET_ASSETS AS REAL)) AS total_monthly_assets,
+	   SUM(CAST(f.DAILY_AVG_NET_ASSETS AS REAL)) AS total_daily_assets
+FROM FUND_REPORTED_INFO f
+LEFT JOIN REGISTRANT r ON r.ACCESSION_NUMBER = f.ACCESSION_NUMBER
+GROUP BY r.INVESTMENT_COMPANY_TYPE;
 
+-- How MONTHLY and DAILY net assets combine per fund.
+-- Result: positive/missing 5,699; positive/zero 1,027; missing/positive
+-- 129 (likely money market funds); zero/positive 2. No fund has both
+-- positive, so the two columns never double count. 24 funds have no
+-- positive figure. Rule for Phase 4: monthly if positive, else daily if
+-- positive, else no assets.
+SELECT CASE WHEN MONTHLY_AVG_NET_ASSETS IS NULL THEN 'missing' WHEN CAST(MONTHLY_AVG_NET_ASSETS AS REAL) = 0 THEN 'zero' ELSE 'positive' END AS monthly_status,
+	   CASE WHEN DAILY_AVG_NET_ASSETS IS NULL THEN 'missing' WHEN CAST(DAILY_AVG_NET_ASSETS AS REAL) = 0 THEN 'zero' ELSE 'positive' END AS daily_status,
+	   COUNT(*) AS n_funds
+FROM FUND_REPORTED_INFO
+GROUP BY 1, 2;
