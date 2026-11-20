@@ -270,3 +270,65 @@ SELECT CASE WHEN MONTHLY_AVG_NET_ASSETS IS NULL THEN 'missing' WHEN CAST(MONTHLY
 	   COUNT(*) AS n_funds
 FROM FUND_REPORTED_INFO
 GROUP BY 1, 2;
+
+-- Candidate main custodian rows for funds with exactly two (first 40 rows).
+-- Result: all 20 funds list JPMorgan Chase Bank and State Street Bank and
+-- Trust Company, two different banks (different LEIs), both typed as Bank,
+-- neither affiliated. Not representative: sorting by FUND_ID puts low CIKs
+-- first, and 16 of the 20 funds come from one registrant (CIK 0000313212).
+-- Some fund families split custody between two banks, so Phase 4 needs a
+-- rule for these funds.
+WITH main_cust AS (SELECT * FROM CUSTODIAN 
+WHERE IS_SUB_CUSTODIAN = 'N' AND (CUSTODY_TYPE LIKE 'Bank%' OR CUSTODY_TYPE LIKE 'Self%')),
+per_fund AS (SELECT f.FUND_ID, COUNT(m.FUND_ID) AS n_main FROM FUND_REPORTED_INFO f
+LEFT JOIN main_cust m ON f.FUND_ID = m.FUND_ID
+GROUP BY f.FUND_ID)
+SELECT m.FUND_ID, m.CUSTODIAN_NAME, m.CUSTODIAN_LEI, m.CUSTODY_TYPE, m.IS_AFFILIATED
+FROM main_cust m
+LEFT JOIN per_fund p ON m.FUND_ID = p.FUND_ID
+WHERE p.n_main = 2
+ORDER BY m.FUND_ID
+LIMIT 40;
+
+
+-- Which two custodians do funds with exactly two candidates list?
+-- Result (265 funds): JPMorgan + State Street 85, Franklin Templeton
+-- Investor Services (transfer agent) + JPMorgan 46, BBH + BNY 40,
+-- State Street + The Goldman Sachs Group 37, Schwab (broker) + Citibank 19,
+-- JPMorgan + BNY 12, then small pairs. Three kinds: genuine two-bank
+-- splits, a bank plus a non-bank typed as Bank, and the same banks written
+-- in different ways (U.S. Bank has 4 spellings).
+WITH main_cust AS (
+SELECT * FROM CUSTODIAN 
+WHERE IS_SUB_CUSTODIAN = 'N' AND (CUSTODY_TYPE LIKE 'Bank%' OR CUSTODY_TYPE LIKE 'Self%')),
+pairs AS (
+SELECT FUND_ID, MIN(CUSTODIAN_NAME) AS cust_a, MAX(CUSTODIAN_NAME) AS cust_b
+FROM main_cust
+GROUP BY FUND_ID
+HAVING COUNT(*) = 2)
+SELECT cust_a, cust_b, COUNT(*) AS n_funds
+FROM pairs
+GROUP BY cust_a, cust_b
+ORDER BY n_funds DESC;
+
+-- Who is CIK 0000313212 (16 of the first 20 JPMorgan + State Street funds)?
+-- Result: T. Rowe Price International Funds, Inc.
+SELECT DISTINCT REGISTRANT_NAME FROM REGISTRANT WHERE CIK = '0000313212';
+
+
+-- Most common main custodian name + LEI combinations (top 40).
+-- Result: each big bank keeps one LEI across many spellings (State Street
+-- 7 spellings, BNY 5 incl. "BNY Mellon", U.S. Bank 5, Citi 5), so mapping
+-- by LEI first will cover most rows. Name matching is still needed where
+-- the LEI is 'N/A' (some State Street, JPMorgan and Franklin rows).
+-- "US Bank" with LEI N1GZ7BBF3NP8GI976H15 differs from U.S. Bank's usual
+-- LEI: check on GLEIF. Non-banks typed as Bank: Franklin Templeton
+-- Investor Services, Goldman Sachs Group, Schwab, Empower.
+WITH main_cust AS (
+SELECT * FROM CUSTODIAN 
+WHERE IS_SUB_CUSTODIAN = 'N' AND (CUSTODY_TYPE LIKE 'Bank%' OR CUSTODY_TYPE LIKE 'Self%'))
+SELECT CUSTODIAN_NAME, CUSTODIAN_LEI, COUNT(DISTINCT FUND_ID) AS n_funds
+FROM main_cust
+GROUP BY CUSTODIAN_NAME, CUSTODIAN_LEI
+ORDER BY n_funds DESC
+LIMIT 40;
